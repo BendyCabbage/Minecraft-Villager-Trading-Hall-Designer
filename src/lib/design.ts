@@ -120,6 +120,24 @@ export function applyCells(d: Design, cells: number[], blockId: string, erase: b
   return { ...d, [layer]: arr, villagers: villagers ?? d.villagers };
 }
 
+/**
+ * Move what's on `layer` at `from` to `to`, swapping with anything already there.
+ * A villager's name, trades and notes travel with it.
+ */
+export function moveCell(d: Design, from: number, to: number, layer: "floor" | "obj"): Design {
+  if (from === to || d[layer][from] === d[layer][to]) return d;
+  const arr = d[layer].slice();
+  [arr[from], arr[to]] = [arr[to], arr[from]];
+  if (layer === "floor") return { ...d, floor: arr };
+  const villagers = { ...d.villagers };
+  const [a, b] = [d.villagers[from], d.villagers[to]];
+  delete villagers[from];
+  delete villagers[to];
+  if (a) villagers[to] = a;
+  if (b) villagers[from] = b;
+  return { ...d, obj: arr, villagers };
+}
+
 export function updateVillager(d: Design, cell: number, fn: (m: VillagerMeta) => VillagerMeta): Design {
   return { ...d, villagers: { ...d.villagers, [cell]: fn(villagerMeta(d, cell)) } };
 }

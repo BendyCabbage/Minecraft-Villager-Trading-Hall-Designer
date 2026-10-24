@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getBlock } from "@/lib/blocks";
-import { analyze, applyCells, parseDesign, resizeDesign, updateVillager, villagerName, xy, type Design, type VillagerMeta } from "@/lib/design";
+import { analyze, applyCells, moveCell, parseDesign, resizeDesign, updateVillager, villagerName, xy, type Design, type VillagerMeta } from "@/lib/design";
 import { DEFAULT_TEMPLATE, generateHall, type VillagerSource } from "@/lib/templates";
 import { preloadTiles } from "@/lib/tiles";
 import { EDITIONS, bookKey, resolveTrade, type Edition } from "@/lib/trades";
@@ -407,6 +407,10 @@ export function Designer() {
             onApply={apply}
             onPick={pick}
             onSelect={select}
+            onMove={(from, to, layer) => {
+              commit(moveCell(designRef.current, from, to, layer));
+              select(to);
+            }}
             onHover={setHover}
             onZoom={setZoom}
           />
@@ -465,7 +469,10 @@ export function Designer() {
                   .join(" ")
               ) : (
                 <>
-                  Left-click places, right-click erases. Hold Space and drag to pan, scroll to zoom.
+                  {tool === "inspect"
+                    ? "Click to select. Drag a villager or block to move it; drop it on another to swap them."
+                    : "Left-click places, right-click erases."}{" "}
+                  Hold Space and drag to pan, scroll to zoom.
                 </>
               )}
             </span>

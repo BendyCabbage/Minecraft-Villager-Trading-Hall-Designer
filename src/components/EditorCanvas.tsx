@@ -40,6 +40,8 @@ interface Props {
   onApply(cells: number[], erase: boolean): void;
   onPick(cell: number): void;
   onSelect(cell: number | null): void;
+  /** Drag-and-drop with the inspect tool: move (or swap) what's on `layer`. */
+  onMove(from: number, to: number, layer: "floor" | "obj"): void;
   onHover(cell: number | null): void;
   onZoom(zoom: number): void;
 }
@@ -57,6 +59,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
   const [view, setView] = useState<View>({ zoom: 2, x: 40, y: 40 });
   const [hover, setHover] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ cells: number[]; erase: boolean } | null>(null);
+  const [moving, setMoving] = useState<{ from: number; to: number; layer: "floor" | "obj" } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [panning, setPanning] = useState(false);
 
@@ -70,6 +73,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
     | { kind: "paint"; last: number; erase: boolean }
     | { kind: "shape"; start: number; erase: boolean }
+    | { kind: "move"; from: number; layer: "floor" | "obj" }
     | null
   >(null);
 
@@ -298,7 +302,33 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       ctx.globalAlpha = 1;
     }
 
-    if (selected !== null && selected < d.obj.length) {
+    if (moving) {
+      // Origin: dimmed, showing what will swap into it. Target: a ghost of what's being moved.
+      const movedTile = getTile(d[moving.layer][moving.from] ?? "");
+      const swapId = d[moving.layer][moving.to];
+      const [ox, oy, ow] = cellRect(moving.from);
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(ox, oy, ow, ow);
+      if (swapId) {
+        const swapTile = getTile(swapId);
+        ctx.globalAlpha = 0.6;
+        if (swapTile) ctx.drawImage(swapTile, ox, oy, ow, ow);
+        ctx.globalAlpha = 1;
+      }
+      const [tx, ty, tw] = cellRect(moving.to);
+      ctx.globalAlpha = 0.85;
+      if (movedTile) ctx.drawImage(movedTile, tx, ty, tw, tw);
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = "#ffffff";
+      ctx.strokeRect(ox + 1, oy + 1, ow - 2, ow - 2);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = swapId ? "#f6e05e" : "#ffffff";
+      ctx.strokeRect(tx + 1, ty + 1, tw - 2, tw - 2);
+    }
+
+    if (selected !== null && selected < d.obj.length && !moving) {
       const [sx, sy, w] = cellRect(selected, 1);
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#0b0d10";
@@ -308,7 +338,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       ctx.strokeRect(sx, sy, w, w);
     }
 
-    if (hover !== null && hover < d.obj.length && !preview) {
+    if (hover !== null && hover < d.obj.length && !preview && !moving) {
       const [sx, sy, w] = cellRect(hover, 0.5);
       if (tool !== "inspect" && tool !== "picker") {
         const tile = getTile(block);
@@ -326,7 +356,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     ctx.lineWidth = 1;
     ctx.strokeStyle = "rgba(255,255,255,0.18)";
     ctx.strokeRect(Math.round(view.x) - 0.5, Math.round(view.y) - 0.5, d.width * cellPx + 1, d.height * cellPx + 1);
-  }, [design, analysis, view, size, overlays, hover, preview, selected, tool, block]);
+  }, [design, analysis, view, size, overlays, hover, preview, moving, selected, tool, block]);
 
   // Native listener so we can preventDefault (stops trackpad pinch zooming the page).
   useEffect(() => {
@@ -375,6 +405,11 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     const erase = e.button === 2;
     if (tool === "inspect") {
       props.onSelect(cell);
+      // Pick up the villager/block, or the floor if that's all there is.
+      if (cell !== null && e.button === 0) {
+        const layer = design.obj[cell] ? "obj" : design.floor[cell] ? "floor" : null;
+        if (layer) drag.current = { kind: "move", from: cell, layer };
+      }
       return;
     }
     if (cell === null) return;
@@ -415,6 +450,8 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     } else if (g?.kind === "shape") {
       const end = cellAt(e, true)!;
       setPreview({ cells: shapeCells(g.start, end), erase: g.erase });
+    } else if (g?.kind === "move") {
+      setMoving(cell !== null && cell !== g.from ? { from: g.from, to: cell, layer: g.layer } : null);
     }
   };
 
@@ -430,15 +467,22 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       props.onEndEdit();
       setPreview(null);
     }
+    if (g?.kind === "move") {
+      const to = cellAt(e);
+      if (to !== null && to !== g.from) props.onMove(g.from, to, g.layer);
+      setMoving(null);
+    }
   };
 
   const cursor =
-    panning
+    panning || moving
       ? "grabbing"
       : spaceDown
       ? "grab"
       : tool === "inspect"
-        ? "default"
+        ? hover !== null && (design.obj[hover] || design.floor[hover])
+          ? "grab"
+          : "default"
         : tool === "picker"
           ? "copy"
           : "crosshair";
