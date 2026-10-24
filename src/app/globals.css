@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+/*
+ * The chrome borrows Minecraft's own GUI: stone-grey panels with a white top-left
+ * highlight and a dark bottom-right shadow, sunken slots, and dark ink. The hall
+ * itself sits in a dark "world" viewport so the block textures carry the colour.
+ */
+:root {
+  --gui: #c6c6c6;
+  --gui-deep: #b3b3b3;
+  --gui-hi: #ffffff;
+  --gui-lo: #555555;
+  --slot: #8b8b8b;
+  --slot-hi: #9f9f9f;
+  --outline: #1e1e1e;
+  --ink: #262626;
+  --ink-soft: #464646;
+  --world: #17161c;
+  --emerald: #0f7f3d;
+  --emerald-hi: #20c45a;
+  --enchant: #6d35c4;
+  --enchant-hi: #b089f5;
+  --redstone: #a8231b;
+  --gold: #8f5f00;
+  --lapis: #27529e;
+}
+
+@theme inline {
+  --color-gui: var(--gui);
+  --color-gui-deep: var(--gui-deep);
+  --color-gui-hi: var(--gui-hi);
+  --color-gui-lo: var(--gui-lo);
+  --color-slot: var(--slot);
+  --color-outline: var(--outline);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-world: var(--world);
+  --color-emerald: var(--emerald);
+  --color-emerald-hi: var(--emerald-hi);
+  --color-enchant: var(--enchant);
+  --color-enchant-hi: var(--enchant-hi);
+  --color-redstone: var(--redstone);
+  --color-gold: var(--gold);
+  --color-lapis: var(--lapis);
+  --font-sans: var(--font-plex);
+  --font-pixel: var(--font-pixelify);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #3a3a3a;
+  color: var(--ink);
+  font-family: var(--font-plex), system-ui, sans-serif;
+  font-feature-settings: "tnum" 1;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+}
+
+/* Raised GUI panel. */
+.gui {
+  background: var(--gui);
+  box-shadow:
+    inset 2px 2px 0 var(--gui-hi),
+    inset -2px -2px 0 var(--gui-lo);
+}
+
+/* Floating panel over the world: raised plus a hard outline. */
+.gui-float {
+  background: var(--gui);
+  box-shadow:
+    inset 2px 2px 0 var(--gui-hi),
+    inset -2px -2px 0 var(--gui-lo),
+    0 0 0 2px var(--outline),
+    0 6px 0 2px rgb(0 0 0 / 0.35);
+}
+
+/* Sunken inventory slot. */
+.slot {
+  background: var(--slot);
+  box-shadow:
+    inset 2px 2px 0 #373737,
+    inset -2px -2px 0 var(--gui-hi);
+}
+
+.slot[data-active="true"] {
+  background: #a4d9b3;
+  box-shadow:
+    inset 2px 2px 0 #1d5a32,
+    inset -2px -2px 0 var(--gui-hi),
+    0 0 0 2px var(--emerald);
+}
+
+/* Text field: sunken, dark like the anvil rename box. */
+.field {
+  background: #1f1f1f;
+  color: #f0f0f0;
+  box-shadow:
+    inset 2px 2px 0 #000,
+    inset -2px -2px 0 #6b6b6b;
+}
+
+.field::placeholder {
+  color: #9a9a9a;
+}
+
+/* Stone button, as on Minecraft's menus. */
+.btn {
+  background: #a2a2a2;
+  color: var(--ink);
+  box-shadow:
+    inset 2px 2px 0 #d8d8d8,
+    inset -2px -2px 0 #5a5a5a,
+    0 0 0 1px var(--outline);
+}
+
+.btn:hover:not(:disabled) {
+  background: #b3b3c9;
+}
+
+.btn:active:not(:disabled) {
+  box-shadow:
+    inset 2px 2px 0 #5a5a5a,
+    inset -2px -2px 0 #d8d8d8,
+    0 0 0 1px var(--outline);
+}
+
+.btn:disabled {
+  color: #6c6c6c;
+  background: #9a9a9a;
+  cursor: not-allowed;
+}
+
+.btn[data-active="true"] {
+  background: #6f9f7f;
+  color: #0b1f12;
+  box-shadow:
+    inset 2px 2px 0 #3f6e4f,
+    inset -2px -2px 0 #a8d4b5,
+    0 0 0 1px var(--outline);
+}
+
+.btn-emerald {
+  background: var(--emerald);
+  color: #fff;
+  box-shadow:
+    inset 2px 2px 0 #3fd27a,
+    inset -2px -2px 0 #064a22,
+    0 0 0 1px var(--outline);
+}
+
+.btn-emerald:hover:not(:disabled) {
+  background: #13924a;
+}
+
+/* A trade, styled after the merchant screen's offer buttons. */
+.offer {
+  background: #b9b9b9;
+  box-shadow:
+    inset 2px 2px 0 #e2e2e2,
+    inset -2px -2px 0 #6c6c6c;
+}
+
+.offer[data-wanted="true"] {
+  background: #c3b6dc;
+  box-shadow:
+    inset 2px 2px 0 #ece4fb,
+    inset -2px -2px 0 #5c3f8f;
+}
+
+.offer[data-owned="true"] {
+  background: #b5d1bd;
+  box-shadow:
+    inset 2px 2px 0 #e6f5ea,
+    inset -2px -2px 0 #3f7350;
+}
+
+.glint {
+  color: var(--enchant);
+  text-shadow: 0 0 6px rgb(176 137 245 / 0.55);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #7a7a7a transparent;
+}
+
+:focus-visible {
+  outline: 2px solid #f6e05e;
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
