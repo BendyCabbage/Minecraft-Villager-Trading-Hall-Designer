@@ -5,7 +5,7 @@ import { PROFESSIONS, professionById } from "@/lib/blocks";
 import { villagerName, type Analysis, type Design, type WishStatus } from "@/lib/design";
 import { CATEGORIES, LEVEL_NAMES, resolveTrade, tradeOptions, type TradeCategory, type TradeOption } from "@/lib/trades";
 import { TileIcon } from "./TileIcon";
-import { CategoryDot, SectionHeading, TradeTerms, levelRange } from "./ui";
+import { CategoryDot, Credits, SectionHeading, TradeTerms, levelRange } from "./ui";
 
 type Show = "all" | "hall" | "wishlist" | "missing";
 
@@ -228,6 +228,7 @@ export function TradesView({ design: d, analysis: a, onToggleWish, onClearWish, 
               </section>
             ))
           )}
+          <Credits className="mt-8 border-t-2 border-black/15 pt-4" />
         </div>
       </main>
 

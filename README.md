@@ -22,8 +22,6 @@ Open http://localhost:3000.
 - **Materials** list in stacks and shulker boxes.
 - Undo/redo, autosave in the browser, open/save as JSON, export as PNG.
 
-Trade data comes from the Minecraft Wiki, read 2026-10-23 (see `src/lib/trades-data.ts`).
-
 ## Shortcuts
 
 | Key | Action |
@@ -46,3 +44,9 @@ Trade data comes from the Minecraft Wiki, read 2026-10-23 (see `src/lib/trades-d
 - `src/lib/design.ts`: design model, editing ops, analysis, import
 - `src/lib/templates.ts`: hall layouts and wishlist planning
 - `src/components/`: editor canvas, palette, side panels, dialog
+
+## Licence and credits
+
+The code is released under the [MIT License](LICENSE). The villager trade data in `src/lib/trades-data.ts` comes from the [Minecraft Wiki](https://minecraft.wiki/w/Trading) (read 2026-10-23) and is licensed separately under [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/). All block and villager textures are drawn in code for this project; no Mojang assets are included.
+
+Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.

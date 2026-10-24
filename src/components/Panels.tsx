@@ -4,7 +4,7 @@ import { useState } from "react";
 import { PROFESSIONS, getBlock, professionById } from "@/lib/blocks";
 import { MAX_SIZE, MIN_SIZE, clampSize, formatStacks, villagerName, xy, type Analysis, type Design, type IssueLevel } from "@/lib/design";
 import { TileIcon } from "./TileIcon";
-import { SectionHeading } from "./ui";
+import { Credits, SectionHeading } from "./ui";
 
 const LEVEL_STYLE: Record<IssueLevel, { colour: string; label: string }> = {
   error: { colour: "var(--redstone)", label: "Problem" },
@@ -142,6 +142,9 @@ export function HallPanel({
             In game, villagers claim a job site up to 48 blocks away. Keeping each one right next to its own stops them swapping.
           </span>
         </label>
+      </Section>
+      <Section title="About">
+        <Credits />
       </Section>
     </>
   );

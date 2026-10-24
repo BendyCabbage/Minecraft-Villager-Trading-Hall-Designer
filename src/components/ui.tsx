@@ -82,3 +82,26 @@ export function SectionHeading({ children, aside }: { children: React.ReactNode;
     </div>
   );
 }
+
+const REPO_URL = "https://github.com/BendyCabbage/Minecraft-Villager-Trading-Hall-Designer";
+
+/** Required fan-project disclaimer plus the trade data credit. */
+export function Credits({ className = "" }: { className?: string }) {
+  return (
+    <p className={`text-xs leading-relaxed text-ink-soft ${className}`}>
+      Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Trade data from the{" "}
+      <a className="underline hover:text-ink" href="https://minecraft.wiki/w/Trading" target="_blank" rel="noreferrer">
+        Minecraft Wiki
+      </a>
+      , licensed{" "}
+      <a className="underline hover:text-ink" href="https://creativecommons.org/licenses/by-nc-sa/3.0/" target="_blank" rel="noreferrer">
+        CC BY-NC-SA 3.0
+      </a>
+      .{" "}
+      <a className="underline hover:text-ink" href={REPO_URL} target="_blank" rel="noreferrer">
+        Source on GitHub
+      </a>
+      .
+    </p>
+  );
+}
