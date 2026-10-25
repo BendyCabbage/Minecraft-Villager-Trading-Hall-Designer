@@ -300,6 +300,16 @@ const TEXTURES: Record<string, (p: Px) => void> = {
     p.rect(5, 5, 6, 6, "#a2834f");
     p.frame(5, 5, 6, 6, "#5f4a2a");
   },
+  ladder: (p) => {
+    p.rect(3, 0, 2, 16, "#8c6d3e");
+    p.rect(11, 0, 2, 16, "#8c6d3e");
+    p.rect(4, 0, 1, 16, "#5f4a2a");
+    p.rect(12, 0, 1, 16, "#5f4a2a");
+    for (let y = 1; y < 16; y += 4) {
+      p.rect(3, y, 10, 2, "#a2834f");
+      p.rect(3, y + 1, 10, 1, "#6b5132");
+    }
+  },
   rail: (p) => {
     for (let y = 1; y < 16; y += 4) p.rect(2, y, 12, 2, "#6b5132");
     p.rect(3, 0, 2, 16, "#a8a8a8");

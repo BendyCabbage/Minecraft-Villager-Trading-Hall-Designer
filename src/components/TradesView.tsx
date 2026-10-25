@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { PROFESSIONS, professionById } from "@/lib/blocks";
-import { villagerName, type Analysis, type Design, type WishStatus } from "@/lib/design";
+import { cellLabel, villagerName, type Analysis, type Design, type WishStatus } from "@/lib/design";
 import { CATEGORIES, LEVEL_NAMES, resolveTrade, tradeOptions, type TradeCategory, type TradeOption } from "@/lib/trades";
 import { TileIcon } from "./TileIcon";
 import { CategoryDot, Credits, SectionHeading, TradeTerms, levelRange } from "./ui";
@@ -254,7 +254,7 @@ function VillagerLinks({ design, cells, onJump, tone }: { design: Design; cells:
     <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
       {tone === "planned" && <span className="text-enchant">Rolling:</span>}
       {shown.map((c) => (
-        <button key={c} type="button" className={`truncate underline-offset-2 hover:underline ${tone === "owned" ? "font-medium text-emerald" : "text-enchant"}`} onClick={() => onJump(c)}>
+        <button key={c} type="button" className={`truncate underline-offset-2 hover:underline ${tone === "owned" ? "font-medium text-emerald" : "text-enchant"}`} onClick={() => onJump(c)} title={`Show on the plan at ${cellLabel(design, c)}`}>
           {villagerName(design, c)}
         </button>
       ))}

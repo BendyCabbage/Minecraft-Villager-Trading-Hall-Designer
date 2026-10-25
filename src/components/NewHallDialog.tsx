@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getBlock, professionById } from "@/lib/blocks";
-import { MAX_SIZE, MIN_SIZE, clampSize, createDesign, type Design, type WishItem } from "@/lib/design";
-import { drawDesign } from "@/lib/render";
+import { MAX_LEVELS, MAX_SIZE, MIN_SIZE, addLevel, clampSize, createDesign, levelOf, type Design, type WishItem } from "@/lib/design";
+import { drawSheet, fitSheet, sheetLayout } from "@/lib/render";
 import { DEFAULT_TEMPLATE, LAYOUTS, generateHall, planFromWishlist, type TemplateOptions, type VillagerSource } from "@/lib/templates";
 import type { Edition } from "@/lib/trades";
 import { TileIcon } from "./TileIcon";
@@ -35,7 +35,7 @@ export function NewHallDialog({ edition, wishlist, initialSource, oneTradePerVil
     source: initialSource ?? (wishlist.length ? "wishlist" : DEFAULT_TEMPLATE.source),
     oneTradePerVillager,
   });
-  const [size, setSize] = useState({ w: "32", h: "20" });
+  const [size, setSize] = useState({ w: "32", h: "20", levels: "1" });
 
   useEffect(() => {
     const el = ref.current;
@@ -54,9 +54,20 @@ export function NewHallDialog({ edition, wishlist, initialSource, oneTradePerVil
 
   const preview = useMemo(() => (mode === "template" && !wishlistEmpty ? generateHall(opts, edition, wishlist) : null), [mode, opts, edition, wishlist, wishlistEmpty]);
 
+  const perLevel = useMemo(() => {
+    if (!preview || preview.levels < 1) return [];
+    const counts = new Array(preview.levels).fill(0);
+    preview.obj.forEach((id, i) => id?.startsWith("villager_") && counts[levelOf(preview, i)]++);
+    return counts;
+  }, [preview]);
+
   const create = () => {
-    if (mode === "blank") onCreate({ ...createDesign(clampSize(Number(size.w)), clampSize(Number(size.h)), "Untitled hall", edition), wishlist, oneTradePerVillager: opts.oneTradePerVillager });
-    else if (preview) onCreate({ ...preview, wishlist });
+    if (mode === "blank") {
+      let d: Design = { ...createDesign(clampSize(Number(size.w)), clampSize(Number(size.h)), "Untitled hall", edition), wishlist, oneTradePerVillager: opts.oneTradePerVillager };
+      const levels = Math.max(1, Math.min(MAX_LEVELS, Math.round(Number(size.levels)) || 1));
+      while (d.levels < levels) d = addLevel(d, d.levels);
+      onCreate(d);
+    } else if (preview) onCreate({ ...preview, wishlist });
   };
 
   return (
@@ -165,6 +176,28 @@ export function NewHallDialog({ edition, wishlist, initialSource, oneTradePerVil
                 )}
               </fieldset>
 
+              <fieldset>
+                <legend className="mb-2 font-pixel text-[15px]">Levels</legend>
+                <label className="flex items-center gap-2 text-sm">
+                  Spread the villagers over
+                  <input
+                    type="number"
+                    min={1}
+                    max={MAX_LEVELS}
+                    value={opts.levels}
+                    onChange={(e) => set("levels", Number(e.target.value))}
+                    className="field w-16 px-2 py-1"
+                    aria-label="Number of levels"
+                  />
+                  level{opts.levels === 1 ? "" : "s"}
+                </label>
+                <p className="mt-2 text-sm text-ink-soft">
+                  {perLevel.length > 1
+                    ? `${listCounts(perLevel)} villagers from the bottom up, on identical floors joined by a ladder.`
+                    : "Stacking floors keeps a big hall compact. Every level gets the same footprint."}
+                </p>
+              </fieldset>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <Swatches label="Floor" ids={FLOORS} value={opts.floor} onChange={(v) => set("floor", v)} />
                 <Swatches label="Walls" ids={WALLS} value={opts.wall} onChange={(v) => set("wall", v)} />
@@ -180,13 +213,13 @@ export function NewHallDialog({ edition, wishlist, initialSource, oneTradePerVil
               <Preview design={preview} />
               {preview && (
                 <p className="mt-2 text-sm text-ink-soft">
-                  {preview.width} × {preview.height} blocks
+                  {preview.width} × {preview.height} blocks{preview.levels > 1 ? `, ${preview.levels} levels` : ""}
                 </p>
               )}
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 px-5 py-5 sm:max-w-md">
+          <div className="grid grid-cols-3 gap-3 px-5 py-5 sm:max-w-lg">
             <label className="block text-sm">
               <span className="mb-1 block text-ink-soft">Width (X)</span>
               <input type="number" min={MIN_SIZE} max={MAX_SIZE} value={size.w} onChange={(e) => setSize((s) => ({ ...s, w: e.target.value }))} className="field w-full px-2.5 py-2" />
@@ -194,6 +227,10 @@ export function NewHallDialog({ edition, wishlist, initialSource, oneTradePerVil
             <label className="block text-sm">
               <span className="mb-1 block text-ink-soft">Depth (Z)</span>
               <input type="number" min={MIN_SIZE} max={MAX_SIZE} value={size.h} onChange={(e) => setSize((s) => ({ ...s, h: e.target.value }))} className="field w-full px-2.5 py-2" />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-ink-soft">Levels</span>
+              <input type="number" min={1} max={MAX_LEVELS} value={size.levels} onChange={(e) => setSize((s) => ({ ...s, levels: e.target.value }))} className="field w-full px-2.5 py-2" />
             </label>
           </div>
         )}
@@ -222,12 +259,19 @@ function Preview({ design }: { design: Design | null }) {
     ctx.fillStyle = "#17161c";
     ctx.fillRect(0, 0, W, H);
     if (!design) return;
-    const cell = Math.max(1, Math.floor(Math.min((W - 16) / design.width, (H - 16) / design.height)));
-    const ox = Math.floor((W - design.width * cell) / 2);
-    const oy = Math.floor((H - design.height * cell) / 2);
-    drawDesign(ctx, design, cell, ox, oy, 0, 0, design.width, design.height);
+    const labelPx = 40;
+    const cell = fitSheet(design, W - 16, H - 16, labelPx);
+    const sheet = sheetLayout(design, cell, labelPx);
+    const ox = Math.floor((W - sheet.width) / 2);
+    const oy = Math.floor((H - sheet.height) / 2);
+    drawSheet(ctx, design, cell, ox, oy, { labelPx, labelColour: "#ececec", font: getComputedStyle(c).fontFamily });
   }, [design]);
   return <canvas ref={ref} width={704} height={528} className="slot pixelated block aspect-[4/3] w-full p-1" aria-label="Preview of the generated hall" />;
+}
+
+/** "8, 8 and 7" */
+function listCounts(counts: number[]) {
+  return counts.length < 2 ? `${counts[0] ?? 0}` : `${counts.slice(0, -1).join(", ")} and ${counts.at(-1)}`;
 }
 
 /** Tiny diagram of each layout: villagers as dots. */

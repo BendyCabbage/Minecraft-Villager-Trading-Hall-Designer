@@ -2,7 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getBlock } from "@/lib/blocks";
-import { analyze, applyCells, moveCell, parseDesign, resizeDesign, updateVillager, villagerName, xy, type Design, type VillagerMeta } from "@/lib/design";
+import {
+  MAX_LEVELS,
+  addLevel,
+  analyze,
+  applyCells,
+  duplicateLevel,
+  eraseCells,
+  levelOf,
+  moveCell,
+  parseDesign,
+  removeLevel,
+  resizeDesign,
+  swapLevels,
+  updateVillager,
+  villagerName,
+  xy,
+  type Design,
+  type VillagerMeta,
+} from "@/lib/design";
 import { DEFAULT_TEMPLATE, generateHall, type VillagerSource } from "@/lib/templates";
 import { preloadTiles } from "@/lib/tiles";
 import { EDITIONS, bookKey, resolveTrade, type Edition } from "@/lib/trades";
@@ -26,9 +44,10 @@ interface Saved {
   overlays: Overlays;
   hotbar: string[];
   view: View;
+  level: number;
 }
 
-const DEFAULT_OVERLAYS: Overlays = { grid: true, links: true, issues: true, spawns: false, labels: true };
+const DEFAULT_OVERLAYS: Overlays = { grid: true, links: true, issues: true, spawns: false, labels: true, below: true };
 const DEFAULT_HOTBAR = ["villager_librarian", "lectern", "stone_bricks", "glass", "floor_stone_bricks", "oak_door", "sea_lantern", "oak_trapdoor", "rail"];
 
 function firstDesign(): Design {
@@ -51,6 +70,7 @@ function loadSaved(): Partial<Saved> {
       overlays: raw.overlays ? { ...DEFAULT_OVERLAYS, ...raw.overlays } : undefined,
       hotbar: hotbar?.length === 9 ? hotbar : undefined,
       view: raw.view === "trades" ? "trades" : "hall",
+      level: Number.isInteger(raw.level) && raw.level >= 0 ? raw.level : undefined,
     };
   } catch {
     return {};
@@ -59,6 +79,7 @@ function loadSaved(): Partial<Saved> {
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode }[] = [
   { id: "pencil", name: "Pencil", key: "B", icon: <path d="M4 20l4-1 11-11-3-3L5 16l-1 4zM14 6l3 3" /> },
+  { id: "eraser", name: "Eraser (Shift clears the floor too)", key: "E", icon: <path d="M14 4l6 6-9 9H7l-4-4L14 4zM9 9l6 6M12 20h8" /> },
   { id: "line", name: "Line", key: "L", icon: <path d="M5 19L19 5" /> },
   { id: "rect", name: "Filled rectangle", key: "R", icon: <rect x="5" y="6" width="14" height="12" fill="currentColor" fillOpacity=".35" /> },
   { id: "outline", name: "Hollow rectangle, for walls", key: "O", icon: <rect x="5" y="6" width="14" height="12" /> },
@@ -73,6 +94,7 @@ const OVERLAY_LABELS: { id: keyof Overlays; name: string; key?: string }[] = [
   { id: "issues", name: "Issues" },
   { id: "spawns", name: "Dark tiles" },
   { id: "grid", name: "Grid", key: "G" },
+  { id: "below", name: "Level below" },
 ];
 
 function download(name: string, href: string) {
@@ -92,6 +114,9 @@ export function Designer() {
   const [past, setPast] = useState<Design[]>([]);
   const [future, setFuture] = useState<Design[]>([]);
   const [view, setView] = useState<View>(saved.view ?? "hall");
+  const [levelState, setLevel] = useState(saved.level ?? 0);
+  // Undo or an import can remove levels from under the current one.
+  const level = Math.min(levelState, design.levels - 1);
   const [tool, setTool] = useState<Tool>("inspect");
   const [block, setBlock] = useState("villager_librarian");
   const [hotbar, setHotbar] = useState<string[]>(saved.hotbar ?? DEFAULT_HOTBAR);
@@ -119,13 +144,13 @@ export function Designer() {
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ design, reach, overlays, hotbar, view } satisfies Saved));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ design, reach, overlays, hotbar, view, level } satisfies Saved));
       } catch {
         // Storage full or blocked: designs still export as JSON.
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [design, reach, overlays, hotbar, view]);
+  }, [design, reach, overlays, hotbar, view, level]);
 
   useEffect(() => {
     if (!toast) return;
@@ -180,10 +205,11 @@ export function Designer() {
   const chooseBlock = useCallback((id: string) => {
     setBlock(id);
     setHotbar((h) => (h.includes(id) ? h : [id, ...h.slice(0, 8)]));
-    setTool((t) => (t === "picker" || t === "inspect" ? "pencil" : t));
+    setTool((t) => (t === "picker" || t === "inspect" || t === "eraser" ? "pencil" : t));
   }, []);
 
   const apply = useCallback((cells: number[], erase: boolean) => setDesign((d) => applyCells(d, cells, block, erase)), [block]);
+  const erase = useCallback((cells: number[], all: boolean) => setDesign((d) => eraseCells(d, cells, all)), []);
 
   const pick = useCallback(
     (cell: number) => {
@@ -202,6 +228,7 @@ export function Designer() {
   const jumpTo = useCallback(
     (cell: number) => {
       setView("hall");
+      setLevel(levelOf(designRef.current, cell));
       select(cell);
       setTool("inspect");
       editor.current?.centerOn(cell);
@@ -219,9 +246,30 @@ export function Designer() {
   const newDesign = (d: Design) => {
     commit(d);
     setSelected(null);
+    setLevel(0);
     setDialog(null);
     setView("hall");
     editor.current?.fit();
+  };
+
+  /* Levels -------------------------------------------------------- */
+
+  /** Apply a change to the stack of levels, then show level `show`. Cell numbers shift, so drop the selection. */
+  const changeLevels = (next: Design, show: number) => {
+    commit(next);
+    setSelected(null);
+    setLevel(show);
+  };
+
+  const levelActions = {
+    onLevel: setLevel,
+    onAdd: () => changeLevels(addLevel(designRef.current, designRef.current.levels), designRef.current.levels),
+    onDuplicate: (l: number) => changeLevels(duplicateLevel(designRef.current, l), l + 1),
+    onRemove: (l: number) => {
+      changeLevels(removeLevel(designRef.current, l), Math.max(0, l - 1));
+      setToast(`Deleted level ${l + 1}. Undo brings it back.`);
+    },
+    onMove: (l: number, by: 1 | -1) => changeLevels(swapLevels(designRef.current, l, l + by), l + by),
   };
 
   const toggleWish = (key: string) => {
@@ -288,6 +336,8 @@ export function Designer() {
       else if (k === "=" || k === "+") editor.current?.zoomBy(1.25);
       else if (k === "-") editor.current?.zoomBy(0.8);
       else if (k === "escape") setSelected(null);
+      else if (e.key === "PageUp") setLevel((l) => Math.min(designRef.current.levels - 1, l + 1));
+      else if (e.key === "PageDown") setLevel((l) => Math.max(0, Math.min(designRef.current.levels - 1, l) - 1));
       else if (/^[1-9]$/.test(k)) {
         const id = hotbar[Number(k) - 1];
         if (id) chooseBlock(id);
@@ -398,6 +448,7 @@ export function Designer() {
             ref={editor}
             design={design}
             analysis={analysis}
+            level={level}
             tool={tool}
             block={block}
             overlays={overlays}
@@ -405,6 +456,7 @@ export function Designer() {
             onBeginEdit={beginEdit}
             onEndEdit={endEdit}
             onApply={apply}
+            onErase={erase}
             onPick={pick}
             onSelect={select}
             onMove={(from, to, layer) => {
@@ -424,7 +476,7 @@ export function Designer() {
               ))}
             </div>
             <div className="gui-float pointer-events-auto flex flex-wrap gap-1 p-1.5" aria-label="Show on the plan">
-              {OVERLAY_LABELS.map((o) => (
+              {OVERLAY_LABELS.filter((o) => o.id !== "below" || design.levels > 1).map((o) => (
                 <button
                   key={o.id}
                   type="button"
@@ -439,6 +491,8 @@ export function Designer() {
               ))}
             </div>
           </div>
+
+          <LevelPicker levels={design.levels} level={level} onLevel={setLevel} onAdd={levelActions.onAdd} />
 
           {/* Hotbar, as in game: the selected slot gets a white frame. */}
           <div className="pointer-events-none absolute inset-x-0 bottom-11 flex justify-center px-3">
@@ -461,6 +515,7 @@ export function Designer() {
           </div>
 
           <div className="gui absolute inset-x-0 bottom-0 flex h-9 items-center gap-4 px-3 text-xs">
+            {design.levels > 1 && <span className="shrink-0 font-medium">Level {level + 1}</span>}
             <span className="w-24 shrink-0 font-medium tabular-nums">{hoverInfo ? `X ${hoverInfo.xy[0]}, Z ${hoverInfo.xy[1]}` : `${design.width} × ${design.height}`}</span>
             <span className="min-w-0 flex-1 truncate text-ink-soft">
               {hoverInfo ? (
@@ -471,7 +526,9 @@ export function Designer() {
                 <>
                   {tool === "inspect"
                     ? "Click to select. Drag a villager or block to move it; drop it on another to swap them."
-                    : "Left-click places, right-click erases."}{" "}
+                    : tool === "eraser"
+                      ? "Click or drag to clear blocks and villagers, then the floor under them. Hold Shift to clear both at once."
+                      : "Left-click places, right-click erases."}{" "}
                   Hold Space and drag to pan, scroll to zoom.
                 </>
               )}
@@ -541,6 +598,9 @@ export function Designer() {
             {tab === "hall" && (
               <HallPanel
                 design={design}
+                analysis={analysis}
+                level={level}
+                levelActions={levelActions}
                 reach={reach}
                 onReach={setReach}
                 onOneTrade={(on) => commit({ ...designRef.current, oneTradePerVillager: on })}
@@ -561,6 +621,32 @@ export function Designer() {
           {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Floor buttons down the left of the canvas, highest level at the top, like a lift panel. */
+function LevelPicker({ levels, level, onLevel, onAdd }: { levels: number; level: number; onLevel(l: number): void; onAdd(): void }) {
+  return (
+    <div className="gui-float absolute top-1/2 left-3 flex -translate-y-1/2 flex-col gap-1 p-1.5" role="group" aria-label="Levels">
+      <button type="button" className="btn flex size-8 items-center justify-center text-lg leading-none" onClick={onAdd} disabled={levels >= MAX_LEVELS} title="Add a level on top" aria-label="Add a level on top">
+        +
+      </button>
+      <span className="mx-0.5 h-0.5 bg-gui-deep" />
+      {Array.from({ length: levels }, (_, k) => levels - 1 - k).map((l) => (
+        <button
+          key={l}
+          type="button"
+          className="btn flex size-8 items-center justify-center font-pixel text-base"
+          data-active={l === level}
+          aria-pressed={l === level}
+          onClick={() => onLevel(l)}
+          title={`Level ${l + 1} (Page Up and Page Down switch levels)`}
+          aria-label={`Level ${l + 1}`}
+        >
+          {l + 1}
+        </button>
+      ))}
     </div>
   );
 }

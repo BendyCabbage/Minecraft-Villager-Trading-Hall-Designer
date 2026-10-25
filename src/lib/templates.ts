@@ -6,7 +6,9 @@ import {
   createDesign,
   emptyMeta,
   idx,
+  MAX_LEVELS,
   inBounds,
+  levelOf,
   spawnableCells,
   xy,
   type Design,
@@ -23,6 +25,8 @@ export interface TemplateOptions {
   source: VillagerSource;
   /** Number of villagers, unless planning from the wishlist. */
   pods: number;
+  /** Floors to share the villagers across. */
+  levels: number;
   floor: string;
   wall: string;
   lights: boolean;
@@ -36,6 +40,7 @@ export const DEFAULT_TEMPLATE: TemplateOptions = {
   layout: "row",
   source: "all",
   pods: 13,
+  levels: 1,
   floor: "floor_stone_bricks",
   wall: "stone_bricks",
   lights: true,
@@ -57,6 +62,8 @@ export interface PodSpec {
   /** Profession whose job site goes in front. */
   station: string;
   meta?: VillagerMeta;
+  /** A spare slot on a level with fewer villagers than the others: walled up. */
+  empty?: boolean;
 }
 
 /**
@@ -109,9 +116,14 @@ export function podsFor(o: TemplateOptions, edition: Edition, wishlist: WishItem
 
 /* ------------------------------------------------------------------ */
 
-type Painter = ReturnType<typeof painter>;
+/** A single-level layout plus where its doors and ladder go when it's stacked. */
+interface Built {
+  d: Design;
+  doors: [number, number][];
+  ladder: [number, number];
+}
 
-function painter(d: Design) {
+function painter(d: Design, o: TemplateOptions) {
   return {
     obj(x: number, y: number, id: string | null) {
       if (inBounds(d, x, y)) d.obj[idx(d, x, y)] = id;
@@ -120,6 +132,11 @@ function painter(d: Design) {
       if (inBounds(d, x, y)) d.floor[idx(d, x, y)] = id;
     },
     pod(vx: number, vy: number, sx: number, sy: number, spec: PodSpec) {
+      if (spec.empty) {
+        this.obj(vx, vy, o.wall);
+        this.obj(sx, sy, o.wall);
+        return;
+      }
       this.obj(vx, vy, `villager_${spec.villager}`);
       this.obj(sx, sy, professionById(spec.station)!.workstation);
       if (spec.meta && inBounds(d, vx, vy)) d.villagers[idx(d, vx, vy)] = spec.meta;
@@ -127,13 +144,13 @@ function painter(d: Design) {
   };
 }
 
-function rowHall(pods: PodSpec[], o: TemplateOptions, double: boolean, p: (d: Design) => Painter) {
+function rowHall(pods: PodSpec[], o: TemplateOptions, double: boolean): Built {
   const perRow = double ? Math.ceil(pods.length / 2) : pods.length;
   const innerW = perRow * 2 + 1;
   // Interior rows: villagers, job sites, walkway ×2, then (double) job sites, villagers.
   const innerH = double ? 6 : 4;
   const d = createDesign(clampSize(innerW + 4), clampSize(innerH + 4));
-  const paint = p(d);
+  const paint = painter(d, o);
   const ox = 2;
   const oy = 1;
 
@@ -155,17 +172,21 @@ function rowHall(pods: PodSpec[], o: TemplateOptions, double: boolean, p: (d: De
   placeRow(oy + 1, oy + 2, pods.slice(0, perRow));
   if (double) placeRow(oy + 6, oy + 5, pods.slice(perRow));
 
-  paint.obj(ox - 1, oy + 3, "oak_door");
-  paint.obj(ox + innerW, oy + 3, "oak_door");
-  return d;
+  const doors: [number, number][] = [
+    [ox - 1, oy + 3],
+    [ox + innerW, oy + 3],
+  ];
+  for (const [x, y] of doors) paint.obj(x, y, "oak_door");
+  // Ladder in the corner of the walkway, against the end wall.
+  return { d, doors, ladder: [ox, oy + 4] };
 }
 
 /** Pods along all four walls, facing inward, with the entrance in the middle of the bottom wall. */
-function squareHall(pods: PodSpec[], o: TemplateOptions, p: (d: Design) => Painter) {
+function squareHall(pods: PodSpec[], o: TemplateOptions): Built {
   const perSide = Math.max(2, Math.ceil((pods.length + 1) / 4));
   const S = perSide * 2 + 5;
   const d = createDesign(clampSize(S + 2), clampSize(S + 2));
-  const paint = p(d);
+  const paint = painter(d, o);
   const m = 1;
   const ring = (x: number, y: number) => Math.min(x, y, S - 1 - x, S - 1 - y);
 
@@ -195,13 +216,17 @@ function squareHall(pods: PodSpec[], o: TemplateOptions, p: (d: Design) => Paint
   paint.obj(ex, m + S - 1, "oak_door");
   paint.obj(ex, m + S - 2, null);
   paint.obj(ex, m + S - 3, null);
-  return d;
+  // Ladder at the inner end of the entrance passage.
+  return { d, doors: [[ex, m + S - 1]], ladder: [ex, m + S - 3] };
 }
 
-/** A ring of pods facing the centre. Grows the radius until every pod fits without touching its neighbours. */
-function circleHall(pods: PodSpec[], o: TemplateOptions, p: (d: Design) => Painter) {
+/**
+ * A ring of pods facing the centre. Grows the radius until every pod fits without touching its neighbours,
+ * unless `radius` fixes it (so every level of a stacked hall shares one footprint).
+ */
+function circleHall(pods: PodSpec[], o: TemplateOptions, radius?: number): Built & { radius: number | null } {
   const slots = pods.length + 1;
-  let R = Math.max(4, Math.ceil((slots * 2.6) / (2 * Math.PI)));
+  let R = radius ?? Math.max(4, Math.ceil((slots * 2.6) / (2 * Math.PI)));
   for (; R < 60; R++) {
     const S = 2 * R + 5;
     const c = R + 2;
@@ -216,10 +241,10 @@ function circleHall(pods: PodSpec[], o: TemplateOptions, p: (d: Design) => Paint
       for (let j = i + 1; j < slots && !clash; j++)
         for (const [ax, ay] of cells[i])
           for (const [bx, by] of cells[j]) if (Math.max(Math.abs(ax - bx), Math.abs(ay - by)) < 2) clash = true;
-    if (clash) continue;
+    if (clash && radius === undefined) continue;
 
     const d = createDesign(clampSize(S), clampSize(S));
-    const paint = p(d);
+    const paint = painter(d, o);
     for (let y = 0; y < S; y++)
       for (let x = 0; x < S; x++) {
         const r = Math.hypot(x - c, y - c);
@@ -233,20 +258,25 @@ function circleHall(pods: PodSpec[], o: TemplateOptions, p: (d: Design) => Paint
     });
     // Entrance: clear a path out along the spare slot's ray, with a door in the outer wall.
     const e = slots - 1;
-    let door: readonly [number, number] | null = null;
+    const path: [number, number][] = [];
     for (let r = R - 2; r <= R + 2; r += 0.5) {
       const [x, y] = at(e, r);
       if (Math.hypot(x - c, y - c) > R + 1.8) break;
       paint.obj(x, y, null);
-      door = [x, y];
+      if (!path.some(([px, py]) => px === x && py === y)) path.push([x, y]);
     }
-    if (door) paint.obj(door[0], door[1], "oak_door");
+    const door = path.at(-1)!;
+    paint.obj(door[0], door[1], "oak_door");
+    // Ladder just inside the door, in the passage through the wall.
+    const built = { d, doors: [door], ladder: path.at(-2) ?? door, radius: R };
 
     // Accept only if every pod links up and is boxed in.
+    if (radius !== undefined) return built;
     const a = analyze(d, 1);
-    if (a.links.size === pods.length && !a.issues.some((is) => is.level !== "info" && /boxed|no free/.test(is.message))) return d;
+    const real = pods.filter((s) => !s.empty).length;
+    if (a.links.size === real && !a.issues.some((is) => is.level !== "info" && /boxed|no free/.test(is.message))) return built;
   }
-  return squareHall(pods, o, p);
+  return { ...squareHall(pods, o), radius: null };
 }
 
 /** Drop floor lights into any dark patch until nothing can spawn. */
@@ -256,6 +286,7 @@ function lightUp(d: Design) {
     if (!dark.length) return;
     const set = new Set(dark);
     const [x, y] = xy(d, dark[0]);
+    const level = levelOf(d, dark[0]);
     // Step into the dark patch rather than hugging its top-left corner.
     const pick = [
       [x + 5, y + 5],
@@ -263,19 +294,69 @@ function lightUp(d: Design) {
       [x, y + 5],
       [x + 3, y + 3],
     ]
-      .filter(([px, py]) => inBounds(d, px, py) && set.has(idx(d, px, py)))
-      .map(([px, py]) => idx(d, px, py))[0] ?? dark[0];
+      .filter(([px, py]) => inBounds(d, px, py) && set.has(idx(d, px, py, level)))
+      .map(([px, py]) => idx(d, px, py, level))[0] ?? dark[0];
     d.floor[pick] = "floor_sea_lantern";
   }
 }
 
+/** Split items into `levels` runs as evenly as possible, fullest first. */
+export function splitLevels<T>(items: T[], levels: number): T[][] {
+  const n = Math.max(1, Math.min(MAX_LEVELS, Math.round(levels) || 1, items.length || 1));
+  const base = Math.floor(items.length / n);
+  const extra = items.length % n;
+  const out: T[][] = [];
+  let at = 0;
+  for (let l = 0; l < n; l++) {
+    const size = base + (l < extra ? 1 : 0);
+    out.push(items.slice(at, at + size));
+    at += size;
+  }
+  return out;
+}
+
+/** Stack single-level layouts. Upper levels swap their doors for wall, and a ladder links every level. */
+function stack(built: Built[], o: TemplateOptions): Design {
+  const { width, height } = built[0].d;
+  const A = width * height;
+  const d = createDesign(width, height);
+  d.levels = built.length;
+  d.floor = built.flatMap((b) => b.d.floor);
+  d.obj = built.flatMap((b) => b.d.obj);
+  built.forEach((b, l) => {
+    for (const [cell, meta] of Object.entries(b.d.villagers)) d.villagers[l * A + Number(cell)] = meta;
+  });
+  if (built.length > 1)
+    built.forEach((b, l) => {
+      if (l > 0) for (const [x, y] of b.doors) d.obj[idx(d, x, y, l)] = o.wall;
+      const ladder = idx(d, b.ladder[0], b.ladder[1], l);
+      d.obj[ladder] = "ladder";
+      // A hole in the floor where the ladder comes up from the level below.
+      if (l > 0) d.floor[ladder] = null;
+    });
+  return d;
+}
+
 export function generateHall(o: TemplateOptions, edition: Edition, wishlist: WishItem[]): Design {
   const pods = podsFor(o, edition, wishlist);
-  const build = o.layout === "square" ? squareHall : o.layout === "circle" ? circleHall : null;
-  const d = build ? build(pods, o, painter) : rowHall(pods, o, o.layout === "double", painter);
+  const runs = splitLevels(pods, o.levels);
+  const per = runs[0].length;
+  const spare = (): PodSpec => ({ villager: "unemployed", station: "librarian", empty: true });
+  const padded = runs.map((run) => [...run, ...Array.from({ length: per - run.length }, spare)]);
+
+  let built: Built[];
+  if (o.layout === "circle") {
+    // The fullest level picks the radius; the rest reuse it.
+    const first = circleHall(padded[0], o);
+    built = [first, ...padded.slice(1).map((run) => (first.radius === null ? squareHall(run, o) : circleHall(run, o, first.radius)))];
+  } else if (o.layout === "square") built = padded.map((run) => squareHall(run, o));
+  else built = padded.map((run) => rowHall(run, o, o.layout === "double"));
+
+  const d = stack(built, o);
   if (o.lights) lightUp(d);
   const layout = LAYOUTS.find((l) => l.id === o.layout)!.name.toLowerCase();
-  d.name = o.source === "wishlist" ? `Wishlist hall (${layout})` : `${pods.length}-villager ${layout} hall`;
+  const floors = d.levels > 1 ? `, ${d.levels} levels` : "";
+  d.name = o.source === "wishlist" ? `Wishlist hall (${layout}${floors})` : `${pods.length}-villager ${layout} hall${floors}`;
   d.edition = edition;
   d.wishlist = wishlist;
   d.oneTradePerVillager = o.oneTradePerVillager;

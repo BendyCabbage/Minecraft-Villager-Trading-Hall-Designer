@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PROFESSIONS, getBlock, professionById } from "@/lib/blocks";
-import { MAX_SIZE, MIN_SIZE, clampSize, formatStacks, villagerName, xy, type Analysis, type Design, type IssueLevel } from "@/lib/design";
+import { MAX_LEVELS, MAX_SIZE, MIN_SIZE, cellLabel, clampSize, formatStacks, levelOf, villagerName, type Analysis, type Design, type IssueLevel } from "@/lib/design";
 import { TileIcon } from "./TileIcon";
 import { Credits, SectionHeading } from "./ui";
 
@@ -12,9 +12,7 @@ const LEVEL_STYLE: Record<IssueLevel, { colour: string; label: string }> = {
   info: { colour: "var(--lapis)", label: "Note" },
 };
 
-function coords(d: Design, cell: number) {
-  return xy(d, cell).join(", ");
-}
+const coords = cellLabel;
 
 export function Section({ title, children, aside }: { title?: string; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
@@ -92,8 +90,19 @@ function Row({ label, id, name, onClear }: { label: string; id: string | null; n
 
 /* ------------------------------------------------------------------ */
 
+export interface LevelActions {
+  onLevel(l: number): void;
+  onAdd(): void;
+  onDuplicate(l: number): void;
+  onRemove(l: number): void;
+  onMove(l: number, by: 1 | -1): void;
+}
+
 export function HallPanel({
   design: d,
+  analysis: a,
+  level,
+  levelActions,
   reach,
   onReach,
   onOneTrade,
@@ -101,6 +110,9 @@ export function HallPanel({
   onResize,
 }: {
   design: Design;
+  analysis: Analysis;
+  level: number;
+  levelActions: LevelActions;
   reach: number;
   onReach(n: number): void;
   onOneTrade(on: boolean): void;
@@ -119,6 +131,7 @@ export function HallPanel({
           <SizeForm key={`${d.width}x${d.height}`} width={d.width} height={d.height} onResize={onResize} />
         </div>
       </Section>
+      <LevelsSection design={d} analysis={a} level={level} actions={levelActions} />
       <Section title="Wanted trades">
         <label className="flex items-start gap-2.5 text-sm">
           <input type="checkbox" checked={d.oneTradePerVillager} onChange={(e) => onOneTrade(e.target.checked)} className="mt-0.5 size-4 shrink-0 accent-[#0f7f3d]" />
@@ -147,6 +160,64 @@ export function HallPanel({
         <Credits />
       </Section>
     </>
+  );
+}
+
+function LevelsSection({ design: d, analysis: a, level, actions }: { design: Design; analysis: Analysis; level: number; actions: LevelActions }) {
+  const counts = new Array(d.levels).fill(0);
+  for (const v of a.villagers) counts[levelOf(d, v)]++;
+  const full = d.levels >= MAX_LEVELS;
+  return (
+    <Section
+      title="Levels"
+      aside={
+        <button type="button" className="btn px-2.5 py-1 text-xs" onClick={actions.onAdd} disabled={full} title={full ? `Halls can have up to ${MAX_LEVELS} levels` : undefined}>
+          Add level
+        </button>
+      }
+    >
+      <ul className="space-y-1">
+        {counts
+          .map((n, l) => ({ n, l }))
+          .reverse()
+          .map(({ n, l }) => (
+            <li key={l} className={`flex items-center gap-1 border-2 py-1 pr-1 pl-2.5 ${l === level ? "border-ink bg-white/35" : "border-transparent"}`}>
+              <button type="button" className="min-w-0 flex-1 text-left text-sm" onClick={() => actions.onLevel(l)} aria-pressed={l === level}>
+                <span className="font-medium">Level {l + 1}</span>
+                <span className="ml-2 text-xs text-ink-soft">
+                  {n} villager{n === 1 ? "" : "s"}
+                </span>
+              </button>
+              <LevelButton label={`Move level ${l + 1} up`} disabled={l === d.levels - 1} onClick={() => actions.onMove(l, 1)}>
+                <path d="M12 19V5M6 11l6-6 6 6" />
+              </LevelButton>
+              <LevelButton label={`Move level ${l + 1} down`} disabled={l === 0} onClick={() => actions.onMove(l, -1)}>
+                <path d="M12 5v14M6 13l6 6 6-6" />
+              </LevelButton>
+              <LevelButton label={`Duplicate level ${l + 1}`} disabled={full} onClick={() => actions.onDuplicate(l)}>
+                <path d="M9 9h11v11H9zM5 15V4h11" />
+              </LevelButton>
+              <LevelButton label={`Delete level ${l + 1}`} disabled={d.levels === 1} onClick={() => actions.onRemove(l)}>
+                <path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" />
+              </LevelButton>
+            </li>
+          ))}
+      </ul>
+      <p className="mt-2.5 text-xs leading-relaxed text-ink-soft">
+        Every level shares the hall’s footprint and is checked on its own: villagers only claim job sites on their own level. Connect levels with ladders. A duplicate copies the
+        blocks and villagers, but not their names or trades.
+      </p>
+    </Section>
+  );
+}
+
+function LevelButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick(): void; children: React.ReactNode }) {
+  return (
+    <button type="button" className="btn flex size-7 items-center justify-center" disabled={disabled} onClick={onClick} title={label} aria-label={label}>
+      <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="square" strokeLinejoin="miter" aria-hidden>
+        {children}
+      </svg>
+    </button>
   );
 }
 

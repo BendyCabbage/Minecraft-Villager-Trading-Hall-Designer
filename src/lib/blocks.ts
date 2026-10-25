@@ -170,6 +170,7 @@ export const BLOCKS: BlockDef[] = [
   utility("iron_door", "Iron Door", { solid: true, hint: "Villagers can't open iron doors" }),
   utility("oak_trapdoor", "Oak Trapdoor", { solid: true, hint: "Closed trapdoors stop villagers walking" }),
   utility("oak_fence", "Oak Fence", { solid: true }),
+  utility("ladder", "Ladder", { hint: "Climbs between levels" }),
   utility("rail", "Rail", { noSpawn: true }),
   utility("powered_rail", "Powered Rail", { noSpawn: true }),
   utility("torch", "Torch", { light: 14 }),

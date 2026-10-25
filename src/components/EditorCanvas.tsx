@@ -1,11 +1,11 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { floodCells, idx, lineCells, rectCells, villagerName, xy, type Analysis, type Design } from "@/lib/design";
-import { drawDesign, drawGrid } from "@/lib/render";
+import { floodCells, idx, levelOf, lineCells, rectCells, villagerName, xy, type Analysis, type Design } from "@/lib/design";
+import { drawDesign, drawGhost, drawGrid, drawSheet, sheetLayout } from "@/lib/render";
 import { TILE, getTile } from "@/lib/tiles";
 
-export type Tool = "pencil" | "line" | "rect" | "outline" | "fill" | "picker" | "inspect";
+export type Tool = "pencil" | "eraser" | "line" | "rect" | "outline" | "fill" | "picker" | "inspect";
 
 export interface Overlays {
   grid: boolean;
@@ -13,6 +13,8 @@ export interface Overlays {
   issues: boolean;
   spawns: boolean;
   labels: boolean;
+  /** Faint copy of the level below. */
+  below: boolean;
 }
 
 export interface EditorHandle {
@@ -31,6 +33,8 @@ interface View {
 interface Props {
   design: Design;
   analysis: Analysis;
+  /** The level being shown and edited. */
+  level: number;
   tool: Tool;
   block: string;
   overlays: Overlays;
@@ -38,6 +42,8 @@ interface Props {
   onBeginEdit(): void;
   onEndEdit(): void;
   onApply(cells: number[], erase: boolean): void;
+  /** Eraser tool: clear the top layer of each cell, or every layer with `all`. */
+  onErase(cells: number[], all: boolean): void;
   onPick(cell: number): void;
   onSelect(cell: number | null): void;
   /** Drag-and-drop with the inspect tool: move (or swap) what's on `layer`. */
@@ -52,7 +58,7 @@ const MAX_ZOOM = 8;
 const ISSUE_COLOURS = { error: "#ef4444", warn: "#f59e0b", info: "#38bdf8" } as const;
 
 export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanvas(props, ref) {
-  const { design, analysis, tool, block, overlays, selected } = props;
+  const { design, analysis, level, tool, block, overlays, selected } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -72,6 +78,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
   const drag = useRef<
     | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
     | { kind: "paint"; last: number; erase: boolean }
+    | { kind: "erase"; last: number; all: boolean; done: Set<number> }
     | { kind: "shape"; start: number; erase: boolean }
     | { kind: "move"; from: number; layer: "floor" | "obj" }
     | null
@@ -79,15 +86,16 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
 
   const fitTo = useCallback((d: Design, w: number, h: number) => {
     if (!w || !h) return;
-    // Leave room for the floating toolbar above and the hotbar + status bar below.
-    const padX = 32;
+    // Leave room for the floating toolbar above, the level picker on the left, and the hotbar + status bar below.
+    const left = 72;
+    const right = 32;
     const top = 64;
     const bottom = 104;
     const zoom = Math.max(
       MIN_ZOOM,
-      Math.min(MAX_ZOOM, Math.min((w - padX * 2) / (d.width * TILE), (h - top - bottom) / (d.height * TILE))),
+      Math.min(MAX_ZOOM, Math.min((w - left - right) / (d.width * TILE), (h - top - bottom) / (d.height * TILE))),
     );
-    setView({ zoom, x: (w - d.width * TILE * zoom) / 2, y: top + (h - top - bottom - d.height * TILE * zoom) / 2 });
+    setView({ zoom, x: left + (w - left - right - d.width * TILE * zoom) / 2, y: top + (h - top - bottom - d.height * TILE * zoom) / 2 });
   }, []);
 
   const didFit = useRef(false);
@@ -166,14 +174,19 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
         });
       },
       toPNG(scale, withGrid) {
+        // Every level on one image, each with a heading.
         const d = live.current.design;
         const cellPx = TILE * scale;
+        const labelPx = 40;
+        const pad = d.levels > 1 ? 24 : 0;
+        const sheet = sheetLayout(d, cellPx, labelPx);
         const c = document.createElement("canvas");
-        c.width = d.width * cellPx;
-        c.height = d.height * cellPx;
+        c.width = sheet.width + pad * 2;
+        c.height = sheet.height + pad * 2;
         const ctx = c.getContext("2d")!;
-        drawDesign(ctx, d, cellPx, 0, 0, 0, 0, d.width, d.height);
-        if (withGrid) drawGrid(ctx, d, cellPx, 0, 0, 0, 0, d.width, d.height);
+        ctx.fillStyle = "#17161c";
+        ctx.fillRect(0, 0, c.width, c.height);
+        drawSheet(ctx, d, cellPx, pad, pad, { grid: withGrid, labelPx, labelColour: "#ececec", font: getComputedStyle(canvasRef.current!).fontFamily });
         return c.toDataURL("image/png");
       },
     }),
@@ -193,6 +206,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     ctx.fillRect(0, 0, size.w, size.h);
 
     const d = design;
+    const onLevel = (i: number) => levelOf(d, i) === level;
     const cellPx = TILE * view.zoom;
     const x0 = Math.max(0, Math.floor(-view.x / cellPx));
     const y0 = Math.max(0, Math.floor(-view.y / cellPx));
@@ -212,13 +226,15 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     ctx.fillRect(view.x + 6, view.y + 6, d.width * cellPx, d.height * cellPx);
 
     if (x1 > x0 && y1 > y0) {
-      drawDesign(ctx, d, cellPx, view.x, view.y, x0, y0, x1, y1);
+      drawDesign(ctx, d, cellPx, view.x, view.y, x0, y0, x1, y1, level);
+      if (overlays.below) drawGhost(ctx, d, cellPx, view.x, view.y, x0, y0, x1, y1, level);
 
       if (overlays.spawns) {
         ctx.strokeStyle = "rgba(239,68,68,0.85)";
         ctx.fillStyle = "rgba(239,68,68,0.18)";
         ctx.lineWidth = Math.max(1, cellPx / 14);
         for (const i of analysis.spawnable) {
+          if (!onLevel(i)) continue;
           const [sx, sy, w] = cellRect(i);
           ctx.fillRect(sx, sy, w, w);
           const m = w * 0.3;
@@ -237,6 +253,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
         ctx.lineWidth = Math.max(1.5, cellPx / 10);
         ctx.lineCap = "round";
         for (const [v, s] of analysis.links) {
+          if (!onLevel(v)) continue;
           const [ax, ay] = center(v);
           const [bx, by] = center(s);
           ctx.strokeStyle = "rgba(16,24,20,0.7)";
@@ -257,9 +274,10 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
 
       if (overlays.issues) {
         ctx.lineWidth = Math.max(1.5, cellPx / 12);
-        for (const [i, level] of analysis.issueCells) {
+        for (const [i, issue] of analysis.issueCells) {
+          if (!onLevel(i)) continue;
           const [sx, sy, w] = cellRect(i, ctx.lineWidth / 2);
-          ctx.strokeStyle = ISSUE_COLOURS[level];
+          ctx.strokeStyle = ISSUE_COLOURS[issue];
           ctx.setLineDash([Math.max(2, cellPx / 6), Math.max(2, cellPx / 8)]);
           ctx.strokeRect(sx, sy, w, w);
         }
@@ -271,6 +289,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
         for (const v of analysis.villagers) {
+          if (!onLevel(v)) continue;
           const [cx] = center(v);
           const [, sy] = cellRect(v);
           // Fit within about two cells so neighbouring pods' names don't overlap.
@@ -328,7 +347,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       ctx.strokeRect(tx + 1, ty + 1, tw - 2, tw - 2);
     }
 
-    if (selected !== null && selected < d.obj.length && !moving) {
+    if (selected !== null && selected < d.obj.length && onLevel(selected) && !moving) {
       const [sx, sy, w] = cellRect(selected, 1);
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#0b0d10";
@@ -340,7 +359,10 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
 
     if (hover !== null && hover < d.obj.length && !preview && !moving) {
       const [sx, sy, w] = cellRect(hover, 0.5);
-      if (tool !== "inspect" && tool !== "picker") {
+      if (tool === "eraser") {
+        ctx.fillStyle = "rgba(239,68,68,0.45)";
+        ctx.fillRect(sx, sy, w, w);
+      } else if (tool !== "inspect" && tool !== "picker") {
         const tile = getTile(block);
         if (tile) {
           ctx.globalAlpha = 0.45;
@@ -356,7 +378,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     ctx.lineWidth = 1;
     ctx.strokeStyle = "rgba(255,255,255,0.18)";
     ctx.strokeRect(Math.round(view.x) - 0.5, Math.round(view.y) - 0.5, d.width * cellPx + 1, d.height * cellPx + 1);
-  }, [design, analysis, view, size, overlays, hover, preview, moving, selected, tool, block]);
+  }, [design, analysis, level, view, size, overlays, hover, preview, moving, selected, tool, block]);
 
   // Native listener so we can preventDefault (stops trackpad pinch zooming the page).
   useEffect(() => {
@@ -385,7 +407,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       y = Math.max(0, Math.min(design.height - 1, y));
     }
     if (x < 0 || y < 0 || x >= design.width || y >= design.height) return null;
-    return idx(design, x, y);
+    return idx(design, x, y, level);
   };
 
   const shapeCells = (start: number, end: number) => {
@@ -429,6 +451,13 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
       drag.current = { kind: "paint", last: cell, erase };
       return;
     }
+    if (tool === "eraser") {
+      // Each cell is erased once per stroke, so dragging back over a cleared block leaves its floor.
+      props.onBeginEdit();
+      props.onErase([cell], e.shiftKey);
+      drag.current = { kind: "erase", last: cell, all: e.shiftKey, done: new Set([cell]) };
+      return;
+    }
     drag.current = { kind: "shape", start: cell, erase };
     setPreview({ cells: shapeCells(cell, cell), erase });
   };
@@ -447,6 +476,11 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     if (g?.kind === "paint" && cell !== null && cell !== g.last) {
       props.onApply(lineCells(design, g.last, cell), g.erase);
       g.last = cell;
+    } else if (g?.kind === "erase" && cell !== null && cell !== g.last) {
+      const fresh = lineCells(design, g.last, cell).filter((c) => !g.done.has(c));
+      fresh.forEach((c) => g.done.add(c));
+      if (fresh.length) props.onErase(fresh, g.all);
+      g.last = cell;
     } else if (g?.kind === "shape") {
       const end = cellAt(e, true)!;
       setPreview({ cells: shapeCells(g.start, end), erase: g.erase });
@@ -459,7 +493,7 @@ export const EditorCanvas = forwardRef<EditorHandle, Props>(function EditorCanva
     const g = drag.current;
     drag.current = null;
     setPanning(false);
-    if (g?.kind === "paint") props.onEndEdit();
+    if (g?.kind === "paint" || g?.kind === "erase") props.onEndEdit();
     if (g?.kind === "shape") {
       const end = cellAt(e, true)!;
       props.onBeginEdit();
